@@ -1,0 +1,170 @@
+---
+title: "NYPD Shooting Data"
+author: "S. Williams"
+date: "2025-02-09"
+output:
+  html_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(lubridate)
+```
+
+## Introduction
+This document analyzes NYPD shooting data and explores trends related to **victim race** and cumulative incidents over time.
+
+### Key Features:
+- **Data Cleaning**
+- **Incident Analysis**
+  - Grouping by Victim Race
+  - Cumulative Incident Calculation
+- **Visualization**
+
+## Import and Summarize Data
+
+This section imports the NYPD shooting dataset and provides a high-level summary of the data, including key statistics and structure.
+
+```{r import_data, echo=FALSE}
+# URL of the data set
+url_in <- "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
+# Import the data
+shooting_data <- read_csv(url_in)
+
+# Summarize data for viewing
+summary(shooting_data)
+```
+
+## Clean and Tidy the Data
+
+In this section, we clean and prepare the dataset by:
+- Converting date formats
+- Renaming columns for better readability
+- Removing unnecessary columns
+- Converting categorical variables to factors for better analysis
+
+```{r cleaning_data, echo=FALSE}
+# Convert OCCUR_DATE to date format
+shooting_data <- shooting_data %>%
+  mutate(OCCUR_DATE = mdy(OCCUR_DATE))
+
+# Rename columns for clarity
+shooting_data <- shooting_data %>%
+  rename(Date = OCCUR_DATE, Borough = BORO, Precinct = PRECINCT, Incident_Key = INCIDENT_KEY, Perp_Age = PERP_AGE_GROUP, Perp_Sex = PERP_SEX, Perp_Race = PERP_RACE, Victim_Age = VIC_AGE_GROUP, Victim_Sex = VIC_SEX, Victim_Race = VIC_RACE)
+
+# Remove unnecessary columns
+shooting_data <- shooting_data %>%
+  select(-c(X_COORD_CD, Y_COORD_CD, Latitude, Longitude, Lon_Lat, OCCUR_TIME))
+
+# Convert columns to factors
+shooting_data <- shooting_data %>%
+  mutate(Borough = factor(Borough), Perp_Sex = factor(Perp_Sex, levels = c("M", "F", "U")), Victim_Sex = factor(Victim_Sex, levels = c("M", "F", "U")), Perp_Race = factor(Perp_Race), Victim_Race = factor(Victim_Race), Precinct = factor(Precinct))
+
+# Display summary of cleaned data
+summary(shooting_data)
+```
+
+## Summary Table
+
+The table below provides key summary statistics about the dataset, including the total number of incidents, unique victim races, and the number of precincts covered.
+```{r summary-table, echo=FALSE}
+data.frame(
+  Category = c("Total Incidents", "Unique Victim Races", "Total Precincts"),
+  Value = c(nrow(shooting_data), length(unique(shooting_data$Victim_Race)), length(unique(shooting_data$Precinct)))
+)
+```
+
+## Analyze the Data
+
+Here, we analyze shooting incidents by victim race and compute the cumulative total of incidents over time to identify trends.
+
+```{r data_analysis, echo=FALSE}
+# Analyze incidents by victim race
+Incidents_by_Victim_Race <- shooting_data %>%
+  group_by(Date, Victim_Race) %>%
+  summarize(Daily_Incidents = n(), .groups = "drop")
+
+# Calculate cumulative total per victim race
+Victim_Race_Total <- Incidents_by_Victim_Race %>%
+  group_by(Victim_Race) %>%
+  arrange(Date) %>%
+  mutate(Cumulative_Incidents = cumsum(Daily_Incidents)) %>%
+  ungroup()
+```
+
+## Visualization of Shooting Incidents
+
+Here, We visual representations of shooting incidents over time, broken down by victim race. These graphs help in identifying trends and disparities.
+
+```{r visualization}
+# Cumulative Incidents Over Time by Victim Race
+Victim_Race_Total %>%
+  ggplot(aes(x = Date, y = Cumulative_Incidents, color = Victim_Race, group = Victim_Race)) +    
+  geom_line() +
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 90)) +
+  labs(title = "Cumulative Shooting Incidents Over Time by Victim Race", x = "Date", y = "Cumulative Incidents")
+```
+
+```{r black_victim_visualization}
+# Cumulative Incidents for Black Victims
+Victim_Race_Total %>%
+  filter(Victim_Race == "BLACK") %>%
+  ggplot(aes(x = Date, y = Cumulative_Incidents, color = Victim_Race, group = Victim_Race)) +    
+  geom_line() +
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 90)) +
+  labs(title = "Cumulative Shooting Incidents for Black Victims", x = "Date", y = "Cumulative Incidents")
+```
+
+## Modeling the Data
+
+This section applies a linear regression model to analyze the relationship between victim race and daily incidents. We use this model to understand how different racial groups are affected and predict trends.
+
+### Interpretation of the Linear Regression Model
+The linear regression model predicts the number of daily shooting incidents based on victim race. The model estimates how incidents vary between different racial groups, allowing us to analyze any significant trends in the data. If certain victim races have statistically higher or lower incident counts, this may indicate disparities in crime distribution or reporting.
+
+By examining the model coefficients, we can understand how each race contributes to the total number of daily incidents. The visualization further aids in interpreting how well the model fits the actual data, highlighting any patterns or anomalies.
+
+```{r data_modeling}
+# Build Linear Regression Model
+model <- lm(Daily_Incidents ~ Victim_Race, data = Incidents_by_Victim_Race)
+summary(model)
+```
+
+```{r regression_plot}
+# Add predictions to dataset
+Incidents_by_Victim_Race <- Incidents_by_Victim_Race %>%
+  mutate(Predicted_Incidents = predict(model, newdata = Incidents_by_Victim_Race))
+
+# Convert Victim_Race to numeric for plotting
+Incidents_by_Victim_Race$Race_Index <- as.numeric(as.factor(Incidents_by_Victim_Race$Victim_Race))
+
+# Plot the Linear Regression Model
+ggplot(Incidents_by_Victim_Race, aes(x = Race_Index, y = Daily_Incidents)) +
+  geom_point(alpha = 0.5, color = "red") +  # Actual Data Points
+  geom_line(aes(y = Predicted_Incidents), color = "blue", size = 1) +  # Regression Line
+  scale_x_continuous(breaks = unique(Incidents_by_Victim_Race$Race_Index),
+                     labels = unique(Incidents_by_Victim_Race$Victim_Race)) +  # Labeling Race Categories
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 90)) +
+  labs(title = "Linear Regression Model: Predicted vs Actual Incidents by Victim Race",
+       x = "Victim Race",
+       y = "Daily Incidents")
+```
+
+## Session Information
+
+This section displays session information, including package versions and system details, to ensure reproducibility.
+```{r session-info}
+sessionInfo()
+```
+
+## Bias and Limitations
+
+While this analysis provides insights into shooting incidents based on victim race, it is important to acknowledge potential biases in the data:
+- **Reporting Bias**: The data set relies on reported incidents, which may not account for unreported cases.
+- **Law Enforcement Practices**: Differences in policing strategies across boroughs and precincts can influence the recorded data.
+- **Police Presence and Socioeconomic Conditions**: Crime data may be influenced by areas with **higher police presence**, which tend to be lower-income or historically marginalized neighborhoods. This can create disparities in recorded crime rates and arrests.
+
+
+
